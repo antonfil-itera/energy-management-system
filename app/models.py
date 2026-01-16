@@ -10,6 +10,7 @@ class FacilityBase(BaseModel):
     active_start_time: Optional[time] = None
     active_end_time: Optional[time] = None
     metadata: dict = Field(default_factory=dict)
+    current_charge_kwh: Optional[Decimal] = Field(default=Decimal("0"))
 
 class FacilityCreate(FacilityBase):
     pass
@@ -34,6 +35,7 @@ class Timeseries(BaseModel):
     facility_id: int
     timestamp: datetime
     power_value: Decimal
+    stored_energy_kwh: Optional[Decimal] = None
     created_at: datetime
 
     class Config:

@@ -12,12 +12,13 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [timeRange, setTimeRange] = useState({ start: null, end: null });
+  const [timeRangePreset, setTimeRangePreset] = useState('day');
 
   useEffect(() => {
     loadData();
   }, []);
 
-  const loadData = async () => {
+  const loadData = async (preset = 'day') => {
     try {
       setLoading(true);
       setError(null);
@@ -26,9 +27,23 @@ function App() {
       const facilitiesData = await fetchFacilities();
       setFacilities(facilitiesData);
 
-      // Calculate time range (last 24 hours from now)
+      // Calculate time range based on preset (always ending at current time)
       const endTime = new Date();
-      const startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
+      let startTime;
+
+      switch (preset) {
+        case 'week':
+          startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startTime = new Date(endTime.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'day':
+        default:
+          startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
+          break;
+      }
+
       setTimeRange({ start: startTime, end: endTime });
 
       // Fetch all timeseries data
@@ -39,6 +54,11 @@ function App() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleTimeRangeChange = (preset) => {
+    setTimeRangePreset(preset);
+    loadData(preset);
   };
 
   const handleFacilityClick = (facilityId) => {
@@ -69,6 +89,26 @@ function App() {
     <div className="app">
       <header className="header">
         <h1>Energy Management Dashboard</h1>
+        <div className="time-controls">
+          <button
+            className={`time-preset-btn ${timeRangePreset === 'day' ? 'active' : ''}`}
+            onClick={() => handleTimeRangeChange('day')}
+          >
+            Last 24 Hours
+          </button>
+          <button
+            className={`time-preset-btn ${timeRangePreset === 'week' ? 'active' : ''}`}
+            onClick={() => handleTimeRangeChange('week')}
+          >
+            Last Week
+          </button>
+          <button
+            className={`time-preset-btn ${timeRangePreset === 'month' ? 'active' : ''}`}
+            onClick={() => handleTimeRangeChange('month')}
+          >
+            Last Month
+          </button>
+        </div>
         <p className="subtitle">
           Showing data from {timeRange.start?.toLocaleString()} to {timeRange.end?.toLocaleString()}
         </p>

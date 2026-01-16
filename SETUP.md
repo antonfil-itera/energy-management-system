@@ -133,26 +133,39 @@ All containers should show "Up" status and postgres should show "(healthy)".
 
 ### Step 6: Generate Seed Data
 
-Load 24 hours of timeseries data for all facilities:
+Load 2 months of timeseries data (1-minute intervals) for all household facilities:
 
+```bash
+docker-compose exec api python seed_data.py
+```
+
+**Alternative using API endpoint:**
 ```bash
 curl -X POST http://localhost:8000/seed-timeseries
 ```
 
-**Alternative using browser:**
+**Or using browser:**
 - Open http://localhost:8000/docs
 - Find the `POST /seed-timeseries` endpoint
 - Click "Try it out" → "Execute"
 
-**Expected response:**
-```json
-{
-  "message": "Seed data generated successfully",
-  "records_inserted": 2890,
-  "facilities": 10,
-  "time_range": "2026-01-14 09:00:00 to 2026-01-15 09:00:00"
-}
+**Expected output:**
 ```
+Found 19 facilities
+Inserting 1641619 timeseries records...
+✅ Seed data generation complete!
+   - Time range: 2025-12-17 to 2026-02-15
+   - Total records: 1641619
+   - Records per facility: 86401
+
+📊 Final accumulator charge levels:
+   - Home Battery Small: 2.00 kWh / 2.00 kWh (100.0%)
+   - Home Battery Medium: 5.00 kWh / 5.00 kWh (100.0%)
+   - Home Battery Large: 8.00 kWh / 8.00 kWh (100.0%)
+   - Powerwall System: 10.00 kWh / 10.00 kWh (100.0%)
+```
+
+**Note:** This process takes about 30 seconds as it generates 1.6 million data points.
 
 ### Step 7: Access the Application
 
@@ -177,36 +190,60 @@ http://localhost:8000
 
 ### Global View
 - Shows aggregated production (green line) vs consumption (red line)
-- Displays 24 hours of energy data
+- Displays energy data with time range controls (Last 24 Hours, Last Week, Last Month)
 - Y-axis: Power in kilowatts (kW)
 - X-axis: Time
 
 ### Facilities Legend (Right Panel)
-- **Green ⚡**: Producers (Solar farms, Wind turbines)
-- **Red 🏭**: Consumers (Factories, Residential)
-- **Blue 🔋**: Accumulators (Battery storage, Hydro storage)
+- **Green ⚡**: Producers (Solar panels, Wind turbines)
+- **Red 🏭**: Consumers (Kitchen, Living Room, Bedrooms, etc.)
+- **Blue 🔋**: Accumulators (Home batteries with charge percentage bars)
 - Shows average power for each facility
+- Click any facility to view detailed chart
 
 ### Facility Details
-- Click any facility in the legend
-- View individual power chart
+- Click any facility in the legend to view its individual chart
+- For accumulators: Dual-axis chart showing power flow (kW) and stored energy (kWh)
+- Battery status card displays current charge and percentage
 - See statistics: Average, Max, Min power
 - Click "← Back to Global View" to return
 
+### Time Range Controls
+- **Last 24 Hours**: Shows recent day of data
+- **Last Week**: Shows past 7 days
+- **Last Month**: Shows past 30 days
+- All time ranges automatically cap at current moment (no future data displayed)
+
 ## Available Facilities
 
-The system comes with 10 pre-configured facilities:
+The system comes with 19 pre-configured household facilities simulating a realistic home energy system:
 
-1. **Solar Farm A** - 500 kW (active 6:00-20:00)
-2. **Solar Farm B** - 300 kW (active 6:00-20:00)
-3. **Wind Turbine 1** - 800 kW (24/7)
-4. **Wind Turbine 2** - 800 kW (24/7)
-5. **Factory A** - 1200 kW consumption (active 8:00-18:00)
-6. **Factory B** - 800 kW consumption (24/7)
-7. **Residential Area** - 500 kW consumption (peaks morning/evening)
-8. **Battery Storage 1** - 400 kW capacity
-9. **Battery Storage 2** - 600 kW capacity
-10. **Hydro Pump Storage** - 1000 kW capacity
+### Producers (6 facilities)
+1. **Roof Solar Panel Small** - 5 kW, 12 panels (active 6:00-20:00)
+2. **Roof Solar Panel Medium** - 15 kW, 35 panels (active 6:00-20:00)
+3. **Roof Solar Panel Large** - 30 kW, 70 panels (active 6:00-20:00)
+4. **Garden Solar Station** - 50 kW, 120 panels (active 6:00-20:00)
+5. **Small Wind Turbine** - 10 kW, vertical axis (24/7)
+6. **Medium Wind Turbine** - 50 kW, horizontal axis (24/7)
+
+### Consumers (9 facilities)
+1. **Living Room** - 2.5 kW (TV, lighting, AC)
+2. **Kitchen** - 4.0 kW (refrigerator, stove, microwave, dishwasher)
+3. **Bedroom 1** - 1.5 kW (lighting, heating, electronics)
+4. **Bedroom 2** - 1.5 kW (lighting, heating, electronics)
+5. **Bathroom** - 3.0 kW (water heater, lighting, ventilation)
+6. **Home Office** - 2.0 kW (computer, lighting, printer)
+7. **Garage Workshop** - 3.5 kW (tools, lighting, heater) - active 8:00-22:00
+8. **Garden Lighting** - 0.5 kW (outdoor lights, fountain) - active 18:00-6:00
+9. **Pool System** - 5.0 kW (pump, heater, filter) - active 6:00-22:00
+
+### Accumulators (4 facilities)
+1. **Home Battery Small** - 2 kWh / 2 kW (92% efficiency)
+2. **Home Battery Medium** - 5 kWh / 5 kW (94% efficiency)
+3. **Home Battery Large** - 8 kWh / 8 kW (95% efficiency)
+4. **Powerwall System** - 10 kWh / 10 kW (96% efficiency)
+
+Batteries automatically charge when production exceeds consumption and discharge when consumption exceeds production.
 
 ## Troubleshooting
 
@@ -269,7 +306,12 @@ docker-compose logs frontend
 
 ### Seed Data Command Fails
 
-If the curl command doesn't work:
+If the docker exec command doesn't work, try using the API endpoint:
+
+**Using curl:**
+```bash
+curl -X POST http://localhost:8000/seed-timeseries
+```
 
 **Windows PowerShell:**
 ```powershell
@@ -277,6 +319,16 @@ Invoke-WebRequest -Method POST -Uri http://localhost:8000/seed-timeseries
 ```
 
 **Or use the browser method** (see Step 6 alternative)
+
+### Reset Simulation
+
+If you want to clear all timeseries data and regenerate with new random values:
+
+```bash
+curl -X POST http://localhost:8000/reset-simulation
+```
+
+This is useful for testing different energy scenarios.
 
 ## Stopping the System
 
@@ -358,7 +410,9 @@ Once the system is running:
 2. View API documentation at http://localhost:8000/docs
 3. Try querying specific facilities
 4. Create custom API requests using the documentation
-5. Add new facilities via API
+5. Add new facilities via API (POST /facilities)
+6. Delete facilities to simulate system changes (DELETE /facilities/{id})
+7. Reset simulation to test different scenarios (POST /reset-simulation)
 
 ## Support
 
@@ -376,7 +430,7 @@ If you encounter issues not covered in troubleshooting:
 # 1. Install Docker Desktop
 # 2. Open terminal in project directory
 docker-compose up -d --build
-# 3. Wait 15 seconds
-curl -X POST http://localhost:8000/seed-timeseries
+# 3. Wait 15 seconds, then generate data
+docker-compose exec api python seed_data.py
 # 4. Open browser to http://localhost:3000
 ```

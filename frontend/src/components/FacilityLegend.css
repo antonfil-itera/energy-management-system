@@ -54,3 +54,32 @@
 .facility-power {
   font-weight: 500;
 }
+
+.facility-charge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.charge-bar-container {
+  flex: 1;
+  height: 8px;
+  background-color: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.charge-bar-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+  border-radius: 4px;
+}
+
+.charge-text {
+  font-size: 11px;
+  font-weight: 600;
+  color: #666;
+  min-width: 40px;
+  text-align: right;
+}
