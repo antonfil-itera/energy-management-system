@@ -18,7 +18,6 @@ interface ChartDataItem {
  */
 const sampleDataPoints = (
   dataPoints: TimeSeriesDataPoint[],
-  period: TimePeriod,
   maxPoints: number = 100
 ): TimeSeriesDataPoint[] => {
   if (dataPoints.length <= maxPoints) return dataPoints;
@@ -128,7 +127,7 @@ export const transformBackendData = (
   // Sample data based on period to optimize rendering
   if (period) {
     const maxPoints = period === 'day' ? 150 : period === 'week' ? 100 : 80;
-    return sampleDataPoints(sorted, period, maxPoints);
+    return sampleDataPoints(sorted, maxPoints);
   }
   
   return sorted;

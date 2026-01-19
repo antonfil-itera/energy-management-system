@@ -1,4 +1,4 @@
-const API_BASE = '/api';
+// const API_BASE = '/api';
 
 export interface Facility {
   id: number;
@@ -24,10 +24,25 @@ export interface TimeseriesData {
   created_at: string;
 }
 
+// Cache for loaded data
+let facilitiesCache: Facility[] | null = null;
+let timeseriesCache: TimeseriesData[] | null = null;
+
+// Use local JSON data from public folder
 export const fetchFacilities = async (): Promise<Facility[]> => {
-  const response = await fetch(`${API_BASE}/facilities`);
-  if (!response.ok) throw new Error('Failed to fetch facilities');
-  return response.json();
+  if (facilitiesCache) return facilitiesCache;
+  
+  const response = await fetch('/data/facilities.json');
+  if (!response.ok) throw new Error('Failed to load facilities data');
+  
+  const data = await response.json();
+  facilitiesCache = data.map((f: any) => ({
+    ...f,
+    max_power: parseFloat(f.max_power),
+    current_charge_kwh: f.current_charge_kwh ? parseFloat(f.current_charge_kwh) : undefined
+  })) as Facility[];
+  
+  return facilitiesCache;
 };
 
 export const fetchTimeseries = async (
@@ -36,22 +51,33 @@ export const fetchTimeseries = async (
   facilityIds?: number[],
   limit?: number
 ): Promise<TimeseriesData[]> => {
-  let url = `${API_BASE}/timeseries?`;
+  // Load from cache or fetch
+  if (!timeseriesCache) {
+    const response = await fetch('/data/timeseries.json');
+    if (!response.ok) throw new Error('Failed to load timeseries data');
+    timeseriesCache = await response.json();
+  }
+  
+  let filtered = timeseriesCache as TimeseriesData[];
 
+  // Filter by time range
   if (startTime) {
-    url += `start_time=${startTime.toISOString()}&`;
+    filtered = filtered.filter(d => new Date(d.timestamp) >= startTime);
   }
   if (endTime) {
-    url += `end_time=${endTime.toISOString()}&`;
-  }
-  if (facilityIds && facilityIds.length > 0) {
-    url += `facility_ids=${facilityIds.join(',')}&`;
-  }
-  if (limit) {
-    url += `limit=${limit}&`;
+    filtered = filtered.filter(d => new Date(d.timestamp) <= endTime);
   }
 
-  const response = await fetch(url);
-  if (!response.ok) throw new Error('Failed to fetch timeseries');
-  return response.json();
+  // Filter by facility IDs
+  if (facilityIds && facilityIds.length > 0) {
+    filtered = filtered.filter(d => facilityIds.includes(d.facility_id));
+  }
+
+  // Apply limit
+  if (limit && filtered.length > limit) {
+    const step = Math.ceil(filtered.length / limit);
+    filtered = filtered.filter((_, index) => index % step === 0);
+  }
+
+  return filtered;
 };

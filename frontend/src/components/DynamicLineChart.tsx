@@ -161,7 +161,7 @@ export const DynamicLineChart: React.FC<DynamicLineChartProps> = ({
               boxShadow: isDark ? '0 10px 15px -3px rgb(0 0 0 / 0.3)' : '0 4px 6px -1px rgb(0 0 0 / 0.1)',
               color: tooltipColor
             }}
-            formatter={(value: number) => `${value.toFixed(1)} kW`}
+            formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(1)} kW` : ''}
           />
           <Legend 
             wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }}

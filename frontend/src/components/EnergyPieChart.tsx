@@ -4,6 +4,7 @@ interface ChartData {
   name: string;
   value: number;
   fill: string;
+  [key: string]: any; // Index signature for Recharts compatibility
 }
 
 interface EnergyPieChartProps {
@@ -58,7 +59,7 @@ export const EnergyPieChart: React.FC<EnergyPieChartProps> = ({ data, title, the
             ))}
           </Pie>
           <Tooltip 
-            formatter={(value: number) => `${value.toFixed(1)} kWh`}
+            formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(1)} kWh` : ''}
             contentStyle={{ 
               backgroundColor: tooltipBg, 
               border: `1px solid ${tooltipBorder}`,
