@@ -40,7 +40,10 @@ services:
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/index.html:/app/index.html
-      - ./frontend/vite.config.js:/app/vite.config.js
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/public:/app/public
+    environment:
+      - NODE_ENV=development
 
 volumes:
   postgres_data:

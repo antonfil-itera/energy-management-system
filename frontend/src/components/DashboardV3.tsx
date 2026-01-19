@@ -1,35 +1,124 @@
-import { useState, useMemo } from 'react';
-import type { TimePeriod } from '../types';
-import { generateMockData, calculateTotals } from '../utils/mockData';
-import { EnergyLineChart } from './EnergyLineChart';
+import { useState, useMemo, useEffect } from 'react';
+import type { TimePeriod, Facility, TimeseriesData } from '../types';
+import { fetchFacilities, fetchTimeseries } from '../api';
+import { transformBackendData, calculateTotalsFromBackend } from '../utils/dataTransform';
+import { DynamicLineChart } from './DynamicLineChart';
 import { EnergyPieChart } from './EnergyPieChart';
 
 export const DashboardV3: React.FC = () => {
   const [period, setPeriod] = useState<TimePeriod>('day');
-  const [powerMode, setPowerMode] = useState<'surplus' | 'deficit'>('deficit');
+  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [timeseriesData, setTimeseriesData] = useState<TimeseriesData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const data = useMemo(() => generateMockData(period, powerMode), [period, powerMode]);
-  const totals = useMemo(() => calculateTotals(data), [data]);
+  // Load data from backend
+  useEffect(() => {
+    loadData(period);
+  }, [period]);
+
+  const loadData = async (selectedPeriod: TimePeriod) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Fetch facilities
+      const facilitiesData = await fetchFacilities();
+      setFacilities(facilitiesData);
+
+      // Calculate time range based on period
+      const endTime = new Date();
+      let startTime: Date;
+
+      switch (selectedPeriod) {
+        case 'week':
+          startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startTime = new Date(endTime.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'day':
+        default:
+          startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
+          break;
+      }
+
+      // Fetch timeseries data
+      const timeseries = await fetchTimeseries(startTime, endTime);
+      setTimeseriesData(timeseries);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Transform backend data to chart format
+  const data = useMemo(() => 
+    transformBackendData(facilities, timeseriesData, period), 
+    [facilities, timeseriesData, period]
+  );
+  
+  const totals = useMemo(() => 
+    calculateTotalsFromBackend(facilities, timeseriesData), 
+    [facilities, timeseriesData]
+  );
 
   const currentGeneration = useMemo(() => {
+    if (data.length === 0) return 0;
     const latest = data[data.length - 1];
-    return latest ? latest.solar + latest.wind : 0;
-  }, [data]);
+    const producers = facilities.filter(f => f.type === 'producer');
+    return producers.reduce((sum, facility) => {
+      return sum + (Number(latest[facility.name]) || 0);
+    }, 0);
+  }, [data, facilities]);
 
   const currentConsumption = useMemo(() => {
+    if (data.length === 0) return 0;
     const latest = data[data.length - 1];
-    return latest ? latest.elevator + latest.refrigerator + latest.hvac + latest.lighting + latest.freezer : 0;
-  }, [data]);
+    const consumers = facilities.filter(f => f.type === 'consumer');
+    return consumers.reduce((sum, facility) => {
+      return sum + (Number(latest[facility.name]) || 0);
+    }, 0);
+  }, [data, facilities]);
 
   const currentBattery = useMemo(() => {
-    const latest = data[data.length - 1];
-    return latest ? latest.battery : 0;
-  }, [data]);
+    return totals.averageBattery;
+  }, [totals]);
 
   const netPower = currentGeneration - currentConsumption;
   const netPowerPercentage = currentConsumption > 0 
     ? Math.abs((netPower / currentConsumption) * 100) 
     : 0;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-teal-50 via-emerald-50 to-cyan-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-teal-600 mb-4"></div>
+          <p className="text-gray-600 text-lg">Loading energy data...</p>
+          <p className="text-gray-400 text-sm mt-2">Processing {period === 'month' ? 'monthly' : period === 'week' ? 'weekly' : 'daily'} data</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-teal-50 via-emerald-50 to-cyan-50 flex items-center justify-center">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-6 max-w-md">
+          <p className="text-red-800 font-semibold mb-2">Error loading data</p>
+          <p className="text-red-600 text-sm">{error}</p>
+          <button 
+            onClick={() => loadData(period)}
+            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50 via-emerald-50 to-cyan-50 relative overflow-hidden">
@@ -74,29 +163,7 @@ export const DashboardV3: React.FC = () => {
                   ))}
                 </div>
 
-                {/* Power Mode */}
-                <div className="flex items-center gap-2 bg-white/60 backdrop-blur-sm px-2 py-1.5 rounded-xl shadow-sm border border-white/80">
-                  <button
-                    onClick={() => setPowerMode('surplus')}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                      powerMode === 'surplus'
-                        ? 'bg-emerald-500 text-white shadow-md'
-                        : 'text-gray-600 hover:bg-white/50'
-                    }`}
-                  >
-                    ⬆️ Surplus
-                  </button>
-                  <button
-                    onClick={() => setPowerMode('deficit')}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                      powerMode === 'deficit'
-                        ? 'bg-orange-500 text-white shadow-md'
-                        : 'text-gray-600 hover:bg-white/50'
-                    }`}
-                  >
-                    ⬇️ Deficit
-                  </button>
-                </div>
+
               </div>
             </div>
           </div>
@@ -104,6 +171,15 @@ export const DashboardV3: React.FC = () => {
 
         {/* Main Content */}
         <main className="max-w-[1800px] mx-auto px-6 py-6">
+          {/* Data Info Badge */}
+          {data.length > 0 && (
+            <div className="mb-4 flex justify-end">
+              <div className="text-xs text-gray-500 bg-white/60 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/80">
+                📊 {data.length} data points • Optimized for {period}
+              </div>
+            </div>
+          )}
+
           {/* Metrics Cards - Horizontal Scroll on Mobile */}
           <div className="flex gap-4 overflow-x-auto pb-2 mb-6 scrollbar-hide">
             {/* Generation */}
@@ -211,64 +287,84 @@ export const DashboardV3: React.FC = () => {
           </div>
 
           {/* Charts Section */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
-            <EnergyLineChart data={data} period={period} type="generation" theme="light" />
-            <EnergyLineChart data={data} period={period} type="consumption" theme="light" />
+          <div className="grid grid-cols-1 gap-6 mb-6">
+            <DynamicLineChart data={data} facilities={facilities} period={period} type="generation" theme="light" />
+            <DynamicLineChart data={data} facilities={facilities} period={period} type="consumption" theme="light" />
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
-            <div className="xl:col-span-1">
-              <EnergyLineChart data={data} period={period} type="storage" theme="light" />
-            </div>
-            <div className="xl:col-span-2">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <EnergyPieChart 
-                  data={totals.generation} 
-                  title="Generation Distribution"
-                  theme="light"
-                />
-                <EnergyPieChart 
-                  data={totals.consumption} 
-                  title="Consumption Distribution"
-                  theme="light"
-                />
-              </div>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <EnergyPieChart 
+              data={totals.generation} 
+              title="Generation Distribution"
+              theme="light"
+            />
+            <EnergyPieChart 
+              data={totals.consumption} 
+              title="Consumption Distribution"
+              theme="light"
+            />
           </div>
 
-          {/* Device Grid */}
+          {/* Facilities Grid */}
           <div className="bg-white/50 backdrop-blur-lg rounded-3xl p-6 border border-white/60 shadow-xl">
             <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
               <div className="w-1.5 h-6 bg-gradient-to-b from-teal-500 to-emerald-500 rounded-full"></div>
-              Active Devices
+              Facilities Overview
             </h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-              {[
-                { name: 'Solar', icon: '☀️', type: 'DC', color: 'from-amber-400 to-orange-500' },
-                { name: 'Wind', icon: '💨', type: 'AC', color: 'from-blue-400 to-cyan-500' },
-                { name: 'Elevator', icon: '🛗', type: 'AC', color: 'from-red-400 to-rose-500' },
-                { name: 'Refrigerator', icon: '❄️', type: 'AC', color: 'from-purple-400 to-violet-500' },
-                { name: 'HVAC', icon: '🌡️', type: 'AC', color: 'from-cyan-400 to-teal-500' },
-                { name: 'Lighting', icon: '💡', type: 'AC', color: 'from-yellow-400 to-amber-500' },
-                { name: 'Freezer', icon: '🧊', type: 'AC', color: 'from-emerald-400 to-green-500' },
-              ].map((device) => (
-                <div 
-                  key={device.name}
-                  className="bg-white/60 backdrop-blur-sm rounded-2xl p-4 border border-white/80 hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5"
-                >
-                  <div className={`w-12 h-12 bg-gradient-to-br ${device.color} rounded-xl flex items-center justify-center text-2xl mb-3 shadow-md mx-auto`}>
-                    {device.icon}
-                  </div>
-                  <p className="text-sm font-semibold text-gray-800 text-center mb-1">{device.name}</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">{device.type}</span>
-                    <div className="flex items-center gap-1">
-                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
-                      <span className="text-[10px] text-emerald-600 font-medium">Active</span>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              {facilities.map((facility) => {
+                const getIcon = (type: string, name: string) => {
+                  const lowerName = name.toLowerCase();
+                  if (type === 'producer') {
+                    if (lowerName.includes('solar')) return '☀️';
+                    if (lowerName.includes('wind')) return '💨';
+                    return '⚡';
+                  }
+                  if (type === 'accumulator') return '🔋';
+                  // Consumer icons
+                  if (lowerName.includes('kitchen')) return '🍳';
+                  if (lowerName.includes('living')) return '🛋️';
+                  if (lowerName.includes('bedroom')) return '🛏️';
+                  if (lowerName.includes('bathroom')) return '🚿';
+                  if (lowerName.includes('office')) return '💼';
+                  if (lowerName.includes('garage') || lowerName.includes('workshop')) return '🔧';
+                  if (lowerName.includes('garden') || lowerName.includes('light')) return '💡';
+                  if (lowerName.includes('pool')) return '🏊';
+                  return '🏠';
+                };
+
+                const getColorClass = (type: string) => {
+                  if (type === 'producer') return 'from-amber-400 to-orange-500';
+                  if (type === 'accumulator') return 'from-pink-400 to-fuchsia-500';
+                  return 'from-cyan-400 to-blue-500';
+                };
+
+                const getBadgeClass = (type: string) => {
+                  if (type === 'producer') return 'bg-amber-100 text-amber-700';
+                  if (type === 'accumulator') return 'bg-pink-100 text-pink-700';
+                  return 'bg-cyan-100 text-cyan-700';
+                };
+
+                return (
+                  <div 
+                    key={facility.id}
+                    className="bg-white/60 backdrop-blur-sm rounded-2xl p-4 border border-white/80 hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5"
+                  >
+                    <div className={`w-12 h-12 bg-gradient-to-br ${getColorClass(facility.type)} rounded-xl flex items-center justify-center text-2xl mb-3 shadow-md mx-auto`}>
+                      {getIcon(facility.type, facility.name)}
+                    </div>
+                    <p className="text-sm font-semibold text-gray-800 text-center mb-1 truncate" title={facility.name}>{facility.name}</p>
+                    <div className="flex flex-col items-center gap-1">
+                      <span className={`text-[10px] ${getBadgeClass(facility.type)} px-2 py-0.5 rounded-full capitalize`}>{facility.type}</span>
+                      <p className="text-[10px] text-gray-600 font-medium">{facility.max_power} kW</p>
+                      <div className="flex items-center gap-1">
+                        <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
+                        <span className="text-[10px] text-emerald-600 font-medium">Active</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </main>

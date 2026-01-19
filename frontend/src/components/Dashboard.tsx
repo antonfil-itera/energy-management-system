@@ -1,35 +1,124 @@
-import { useState, useMemo } from 'react';
-import type { TimePeriod } from '../types';
-import { generateMockData, calculateTotals } from '../utils/mockData';
-import { EnergyLineChart } from './EnergyLineChart';
+import { useState, useMemo, useEffect } from 'react';
+import type { TimePeriod, Facility, TimeseriesData } from '../types';
+import { fetchFacilities, fetchTimeseries } from '../api';
+import { transformBackendData, calculateTotalsFromBackend } from '../utils/dataTransform';
+import { DynamicLineChart } from './DynamicLineChart';
 import { EnergyPieChart } from './EnergyPieChart';
 
 export const Dashboard: React.FC = () => {
   const [period, setPeriod] = useState<TimePeriod>('day');
-  const [powerMode, setPowerMode] = useState<'surplus' | 'deficit'>('deficit');
+  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [timeseriesData, setTimeseriesData] = useState<TimeseriesData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const data = useMemo(() => generateMockData(period, powerMode), [period, powerMode]);
-  const totals = useMemo(() => calculateTotals(data), [data]);
+  // Load data from backend
+  useEffect(() => {
+    loadData(period);
+  }, [period]);
+
+  const loadData = async (selectedPeriod: TimePeriod) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Fetch facilities
+      const facilitiesData = await fetchFacilities();
+      setFacilities(facilitiesData);
+
+      // Calculate time range based on period
+      const endTime = new Date();
+      let startTime: Date;
+
+      switch (selectedPeriod) {
+        case 'week':
+          startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startTime = new Date(endTime.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'day':
+        default:
+          startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
+          break;
+      }
+
+      // Fetch timeseries data
+      const timeseries = await fetchTimeseries(startTime, endTime);
+      setTimeseriesData(timeseries);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Transform backend data to chart format
+  const data = useMemo(() => 
+    transformBackendData(facilities, timeseriesData, period), 
+    [facilities, timeseriesData, period]
+  );
+  
+  const totals = useMemo(() => 
+    calculateTotalsFromBackend(facilities, timeseriesData), 
+    [facilities, timeseriesData]
+  );
 
   const currentGeneration = useMemo(() => {
+    if (data.length === 0) return 0;
     const latest = data[data.length - 1];
-    return latest ? latest.solar + latest.wind : 0;
-  }, [data]);
+    const producers = facilities.filter(f => f.type === 'producer');
+    return producers.reduce((sum, facility) => {
+      return sum + (Number(latest[facility.name]) || 0);
+    }, 0);
+  }, [data, facilities]);
 
   const currentConsumption = useMemo(() => {
+    if (data.length === 0) return 0;
     const latest = data[data.length - 1];
-    return latest ? latest.elevator + latest.refrigerator + latest.hvac + latest.lighting + latest.freezer : 0;
-  }, [data]);
+    const consumers = facilities.filter(f => f.type === 'consumer');
+    return consumers.reduce((sum, facility) => {
+      return sum + (Number(latest[facility.name]) || 0);
+    }, 0);
+  }, [data, facilities]);
 
   const currentBattery = useMemo(() => {
-    const latest = data[data.length - 1];
-    return latest ? latest.battery : 0;
-  }, [data]);
+    return totals.averageBattery;
+  }, [totals]);
 
   const netPower = currentGeneration - currentConsumption;
   const netPowerPercentage = currentConsumption > 0 
     ? Math.abs((netPower / currentConsumption) * 100) 
     : 0;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+          <p className="text-gray-600 text-lg">Loading energy data...</p>
+          <p className="text-gray-400 text-sm mt-2">Processing {period === 'month' ? 'monthly' : period === 'week' ? 'weekly' : 'daily'} data</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 flex items-center justify-center">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-6 max-w-md">
+          <p className="text-red-800 font-semibold mb-2">Error loading data</p>
+          <p className="text-red-600 text-sm">{error}</p>
+          <button 
+            onClick={() => loadData(period)}
+            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
@@ -39,7 +128,7 @@ export const Dashboard: React.FC = () => {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl md:text-2xl font-bold tracking-tight">Energy Management System</h1>
-              <p className="text-blue-100 mt-1 text-xs md:text-sm">Wholesale & Retail Trade Enterprise</p>
+              <p className="text-blue-100 mt-1 text-xs md:text-sm">Smart Home Energy Monitoring</p>
             </div>
             <div className="hidden md:flex items-center gap-2 bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-lg">
               <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
@@ -58,32 +147,7 @@ export const Dashboard: React.FC = () => {
               <div className="w-1 h-6 bg-blue-600 rounded-full"></div>
               <h2 className="text-lg font-semibold text-gray-800">Time Period</h2>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Dev Mode Switcher */}
-              <div className="flex items-center gap-2 bg-gray-100 p-1 rounded-xl">
-                <button
-                  onClick={() => setPowerMode('surplus')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                    powerMode === 'surplus'
-                      ? 'bg-green-600 text-white shadow-md shadow-green-200 scale-105'
-                      : 'bg-transparent text-gray-700 hover:bg-gray-200/50'
-                  }`}
-                >
-                  ⬆️ Surplus
-                </button>
-                <button
-                  onClick={() => setPowerMode('deficit')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                    powerMode === 'deficit'
-                      ? 'bg-orange-600 text-white shadow-md shadow-orange-200 scale-105'
-                      : 'bg-transparent text-gray-700 hover:bg-gray-200/50'
-                  }`}
-                >
-                  ⬇️ Deficit
-                </button>
-              </div>
-              {/* Time Period Buttons */}
-              <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+            <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
               <button
                 onClick={() => setPeriod('day')}
                 className={`px-6 py-2.5 rounded-lg font-medium transition-all duration-200 ${
@@ -114,7 +178,6 @@ export const Dashboard: React.FC = () => {
               >
                 Month
               </button>
-            </div>
             </div>
           </div>
         </div>
@@ -202,16 +265,20 @@ export const Dashboard: React.FC = () => {
 
         {/* Line Charts Section */}
         <div className="mb-8">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-1 h-8 bg-blue-600 rounded-full"></div>
-            <h2 className="text-2xl font-bold text-gray-800">Time Series Analysis</h2>
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-1 h-8 bg-blue-600 rounded-full"></div>
+              <h2 className="text-2xl font-bold text-gray-800">Time Series Analysis</h2>
+            </div>
+            {data.length > 0 && (
+              <div className="text-xs text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
+                {data.length} data points • Optimized for {period}
+              </div>
+            )}
           </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            <EnergyLineChart data={data} period={period} type="generation" theme="light" />
-            <EnergyLineChart data={data} period={period} type="consumption" theme="light" />
-          </div>
-          <div className="grid grid-cols-1">
-            <EnergyLineChart data={data} period={period} type="storage" theme="light" />
+          <div className="grid grid-cols-1 gap-6">
+            <DynamicLineChart data={data} facilities={facilities} period={period} type="generation" theme="light" />
+            <DynamicLineChart data={data} facilities={facilities} period={period} type="consumption" theme="light" />
           </div>
         </div>
 
@@ -239,114 +306,73 @@ export const Dashboard: React.FC = () => {
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 p-6">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-1 h-8 bg-blue-600 rounded-full"></div>
-            <h3 className="text-xl font-bold text-gray-800">Device Status</h3>
+            <h3 className="text-xl font-bold text-gray-800">Facilities Overview</h3>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-amber-200 rounded-xl p-5 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center gap-4">
-                <div className="text-4xl flex-shrink-0 drop-shadow">☀️</div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold text-gray-800 text-lg">Solar Station</p>
-                    <span className="text-[10px] bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-medium">DC</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <p className="text-sm text-green-700 font-medium">Active</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="bg-gradient-to-br from-sky-50 to-blue-50 border-2 border-blue-200 rounded-xl p-5 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center gap-4">
-                <div className="text-4xl flex-shrink-0 drop-shadow">💨</div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold text-gray-800 text-lg">Wind Station</p>
-                    <span className="text-[10px] bg-blue-200 text-blue-800 px-2 py-0.5 rounded-full font-medium">AC</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <p className="text-sm text-green-700 font-medium">Active</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="bg-gradient-to-br from-rose-50 to-pink-50 border-2 border-rose-200 rounded-xl p-5 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center gap-4">
-                <div className="text-4xl flex-shrink-0 drop-shadow">🛗</div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold text-gray-800 text-lg">Elevator</p>
-                    <span className="text-[10px] bg-rose-200 text-rose-800 px-2 py-0.5 rounded-full font-medium">AC</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <p className="text-sm text-green-700 font-medium">Running</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="bg-gradient-to-br from-violet-50 to-purple-50 border-2 border-violet-200 rounded-xl p-5 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center gap-4">
-                <div className="text-4xl flex-shrink-0 drop-shadow">❄️</div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold text-gray-800 text-lg">Refrigerator</p>
-                    <span className="text-[10px] bg-violet-200 text-violet-800 px-2 py-0.5 rounded-full font-medium">AC</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <p className="text-sm text-green-700 font-medium">Running</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="bg-gradient-to-br from-cyan-50 to-teal-50 border-2 border-cyan-200 rounded-xl p-5 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center gap-4">
-                <div className="text-4xl flex-shrink-0 drop-shadow">🌡️</div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold text-gray-800 text-lg">HVAC System</p>
-                    <span className="text-[10px] bg-cyan-200 text-cyan-800 px-2 py-0.5 rounded-full font-medium">AC</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <p className="text-sm text-green-700 font-medium">Running</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {facilities.map((facility) => {
+              const getIcon = (type: string, name: string) => {
+                const lowerName = name.toLowerCase();
+                if (type === 'producer') {
+                  if (lowerName.includes('solar')) return '☀️';
+                  if (lowerName.includes('wind')) return '💨';
+                  return '⚡';
+                }
+                if (type === 'accumulator') return '🔋';
+                // Consumer icons
+                if (lowerName.includes('kitchen')) return '🍳';
+                if (lowerName.includes('living')) return '🛋️';
+                if (lowerName.includes('bedroom')) return '🛏️';
+                if (lowerName.includes('bathroom')) return '🚿';
+                if (lowerName.includes('office')) return '💼';
+                if (lowerName.includes('garage') || lowerName.includes('workshop')) return '🔧';
+                if (lowerName.includes('garden') || lowerName.includes('light')) return '💡';
+                if (lowerName.includes('pool')) return '🏊';
+                return '🏠';
+              };
+
+              const getColorClass = (type: string) => {
+                if (type === 'producer') return 'from-amber-50 to-orange-50 border-amber-200';
+                if (type === 'accumulator') return 'from-fuchsia-50 to-pink-50 border-fuchsia-200';
+                return 'from-sky-50 to-blue-50 border-sky-200';
+              };
+
+              const getBadgeClass = (type: string) => {
+                if (type === 'producer') return 'bg-amber-200 text-amber-800';
+                if (type === 'accumulator') return 'bg-fuchsia-200 text-fuchsia-800';
+                return 'bg-sky-200 text-sky-800';
+              };
+
+              return (
+                <div 
+                  key={facility.id}
+                  className={`bg-gradient-to-br ${getColorClass(facility.type)} border-2 rounded-xl p-4 hover:shadow-md transition-shadow duration-200`}
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="text-3xl flex-shrink-0 drop-shadow">
+                      {getIcon(facility.type, facility.name)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <p className="font-semibold text-gray-800 text-sm leading-tight truncate" title={facility.name}>
+                          {facility.name}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`text-[10px] ${getBadgeClass(facility.type)} px-2 py-0.5 rounded-full font-medium`}>
+                          {facility.type.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
+                        <p className="text-xs text-green-700 font-medium">
+                          {facility.max_power} kW
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </div>
-            <div className="bg-gradient-to-br from-yellow-50 to-amber-50 border-2 border-yellow-200 rounded-xl p-5 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center gap-4">
-                <div className="text-4xl flex-shrink-0 drop-shadow">💡</div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold text-gray-800 text-lg">Lighting</p>
-                    <span className="text-[10px] bg-yellow-200 text-yellow-800 px-2 py-0.5 rounded-full font-medium">AC</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <p className="text-sm text-green-700 font-medium">Active</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-200 rounded-xl p-5 hover:shadow-md transition-shadow duration-200">
-              <div className="flex items-center gap-4">
-                <div className="text-4xl flex-shrink-0 drop-shadow">🧊</div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-semibold text-gray-800 text-lg">Freezer</p>
-                    <span className="text-[10px] bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full font-medium">AC</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                    <p className="text-sm text-green-700 font-medium">Running</p>
-                  </div>
-                </div>
-              </div>
-            </div>
+              );
+            })}
           </div>
         </div>
       </main>

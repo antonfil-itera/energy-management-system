@@ -1,35 +1,124 @@
-import { useState, useMemo } from 'react';
-import type { TimePeriod } from '../types';
-import { generateMockData, calculateTotals } from '../utils/mockData';
-import { EnergyLineChart } from './EnergyLineChart';
+import { useState, useMemo, useEffect } from 'react';
+import type { TimePeriod, Facility, TimeseriesData } from '../types';
+import { fetchFacilities, fetchTimeseries } from '../api';
+import { transformBackendData, calculateTotalsFromBackend } from '../utils/dataTransform';
+import { DynamicLineChart } from './DynamicLineChart';
 import { EnergyPieChart } from './EnergyPieChart';
 
 export const DashboardV2: React.FC = () => {
   const [period, setPeriod] = useState<TimePeriod>('day');
-  const [powerMode, setPowerMode] = useState<'surplus' | 'deficit'>('deficit');
+  const [facilities, setFacilities] = useState<Facility[]>([]);
+  const [timeseriesData, setTimeseriesData] = useState<TimeseriesData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const data = useMemo(() => generateMockData(period, powerMode), [period, powerMode]);
-  const totals = useMemo(() => calculateTotals(data), [data]);
+  // Load data from backend
+  useEffect(() => {
+    loadData(period);
+  }, [period]);
+
+  const loadData = async (selectedPeriod: TimePeriod) => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Fetch facilities
+      const facilitiesData = await fetchFacilities();
+      setFacilities(facilitiesData);
+
+      // Calculate time range based on period
+      const endTime = new Date();
+      let startTime: Date;
+
+      switch (selectedPeriod) {
+        case 'week':
+          startTime = new Date(endTime.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startTime = new Date(endTime.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'day':
+        default:
+          startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
+          break;
+      }
+
+      // Fetch timeseries data
+      const timeseries = await fetchTimeseries(startTime, endTime);
+      setTimeseriesData(timeseries);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Transform backend data to chart format
+  const data = useMemo(() => 
+    transformBackendData(facilities, timeseriesData, period), 
+    [facilities, timeseriesData, period]
+  );
+  
+  const totals = useMemo(() => 
+    calculateTotalsFromBackend(facilities, timeseriesData), 
+    [facilities, timeseriesData]
+  );
 
   const currentGeneration = useMemo(() => {
+    if (data.length === 0) return 0;
     const latest = data[data.length - 1];
-    return latest ? latest.solar + latest.wind : 0;
-  }, [data]);
+    const producers = facilities.filter(f => f.type === 'producer');
+    return producers.reduce((sum, facility) => {
+      return sum + (Number(latest[facility.name]) || 0);
+    }, 0);
+  }, [data, facilities]);
 
   const currentConsumption = useMemo(() => {
+    if (data.length === 0) return 0;
     const latest = data[data.length - 1];
-    return latest ? latest.elevator + latest.refrigerator + latest.hvac + latest.lighting + latest.freezer : 0;
-  }, [data]);
+    const consumers = facilities.filter(f => f.type === 'consumer');
+    return consumers.reduce((sum, facility) => {
+      return sum + (Number(latest[facility.name]) || 0);
+    }, 0);
+  }, [data, facilities]);
 
   const currentBattery = useMemo(() => {
-    const latest = data[data.length - 1];
-    return latest ? latest.battery : 0;
-  }, [data]);
+    return totals.averageBattery;
+  }, [totals]);
 
   const netPower = currentGeneration - currentConsumption;
   const netPowerPercentage = currentConsumption > 0 
     ? Math.abs((netPower / currentConsumption) * 100) 
     : 0;
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-gray-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
+          <p className="text-slate-300 text-lg">Loading energy data...</p>
+          <p className="text-slate-500 text-sm mt-2">Processing {period === 'month' ? 'monthly' : period === 'week' ? 'weekly' : 'daily'} data</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-slate-900 text-gray-100 flex items-center justify-center">
+        <div className="bg-red-900/50 border border-red-700 rounded-xl p-6 max-w-md">
+          <p className="text-red-300 font-semibold mb-2">Error loading data</p>
+          <p className="text-red-400 text-sm">{error}</p>
+          <button 
+            onClick={() => loadData(period)}
+            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 text-gray-100 flex">
@@ -54,7 +143,7 @@ export const DashboardV2: React.FC = () => {
 
         {/* Controls */}
         <div className="p-6 border-b border-slate-800">
-          <div className="mb-6">
+          <div>
             <label className="text-xs text-slate-400 uppercase tracking-wider mb-3 block">Time Range</label>
             <div className="space-y-2">
               {(['day', 'week', 'month'] as TimePeriod[]).map((p) => (
@@ -70,32 +159,6 @@ export const DashboardV2: React.FC = () => {
                   {p.charAt(0).toUpperCase() + p.slice(1)}
                 </button>
               ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-slate-400 uppercase tracking-wider mb-3 block">Power Mode</label>
-            <div className="space-y-2">
-              <button
-                onClick={() => setPowerMode('surplus')}
-                className={`w-full px-4 py-2.5 rounded-lg text-left font-medium transition-all ${
-                  powerMode === 'surplus'
-                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20'
-                    : 'bg-slate-800/50 text-slate-300 hover:bg-slate-800'
-                }`}
-              >
-                ⬆️ Surplus
-              </button>
-              <button
-                onClick={() => setPowerMode('deficit')}
-                className={`w-full px-4 py-2.5 rounded-lg text-left font-medium transition-all ${
-                  powerMode === 'deficit'
-                    ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/20'
-                    : 'bg-slate-800/50 text-slate-300 hover:bg-slate-800'
-                }`}
-              >
-                ⬇️ Deficit
-              </button>
             </div>
           </div>
         </div>
@@ -195,15 +258,21 @@ export const DashboardV2: React.FC = () => {
           <div className="space-y-8">
             {/* Time Series */}
             <section>
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-1 h-6 bg-blue-500 rounded-full"></div>
-                <h3 className="text-xl font-semibold text-white">Time Series</h3>
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-1 h-6 bg-blue-500 rounded-full"></div>
+                  <h3 className="text-xl font-semibold text-white">Time Series</h3>
+                </div>
+                {data.length > 0 && (
+                  <div className="text-xs text-slate-400 bg-slate-800/50 px-3 py-1.5 rounded-full border border-slate-700">
+                    {data.length} data points • Optimized
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
-                <EnergyLineChart data={data} period={period} type="generation" theme="dark" />
-                <EnergyLineChart data={data} period={period} type="consumption" theme="dark" />
+              <div className="grid grid-cols-1 gap-6">
+                <DynamicLineChart data={data} facilities={facilities} period={period} type="generation" theme="dark" />
+                <DynamicLineChart data={data} facilities={facilities} period={period} type="consumption" theme="dark" />
               </div>
-              <EnergyLineChart data={data} period={period} type="storage" theme="dark" />
             </section>
 
             {/* Distribution */}
@@ -226,149 +295,75 @@ export const DashboardV2: React.FC = () => {
               </div>
             </section>
 
-            {/* Device Status Table */}
+            {/* Facilities Status Table */}
             <section>
               <div className="flex items-center gap-3 mb-6">
                 <div className="w-1 h-6 bg-blue-500 rounded-full"></div>
-                <h3 className="text-xl font-semibold text-white">Device Status</h3>
+                <h3 className="text-xl font-semibold text-white">Facilities Overview</h3>
               </div>
               <div className="bg-slate-800/50 rounded-2xl border border-slate-700/50 overflow-hidden">
                 <table className="w-full">
                   <thead className="bg-slate-900/50">
                     <tr className="border-b border-slate-700">
-                      <th className="text-left px-6 py-4 text-xs text-slate-400 uppercase tracking-wider font-semibold">Device</th>
+                      <th className="text-left px-6 py-4 text-xs text-slate-400 uppercase tracking-wider font-semibold">Facility</th>
                       <th className="text-left px-6 py-4 text-xs text-slate-400 uppercase tracking-wider font-semibold">Type</th>
-                      <th className="text-left px-6 py-4 text-xs text-slate-400 uppercase tracking-wider font-semibold">Current</th>
+                      <th className="text-left px-6 py-4 text-xs text-slate-400 uppercase tracking-wider font-semibold">Max Power</th>
                       <th className="text-center px-6 py-4 text-xs text-slate-400 uppercase tracking-wider font-semibold">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-700/50">
-                    <tr className="hover:bg-slate-700/30 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">☀️</span>
-                          <span className="font-medium text-white">Solar Station</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-300">Generation</td>
-                      <td className="px-6 py-4">
-                        <span className="text-xs bg-amber-500/20 text-amber-300 px-2 py-1 rounded-full">DC</span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center gap-2 text-sm text-emerald-400">
-                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                          Active
-                        </span>
-                      </td>
-                    </tr>
-                    <tr className="hover:bg-slate-700/30 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">💨</span>
-                          <span className="font-medium text-white">Wind Station</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-300">Generation</td>
-                      <td className="px-6 py-4">
-                        <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-1 rounded-full">AC</span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center gap-2 text-sm text-emerald-400">
-                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                          Active
-                        </span>
-                      </td>
-                    </tr>
-                    <tr className="hover:bg-slate-700/30 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">🛗</span>
-                          <span className="font-medium text-white">Elevator</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-300">Consumption</td>
-                      <td className="px-6 py-4">
-                        <span className="text-xs bg-rose-500/20 text-rose-300 px-2 py-1 rounded-full">AC</span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center gap-2 text-sm text-emerald-400">
-                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                          Running
-                        </span>
-                      </td>
-                    </tr>
-                    <tr className="hover:bg-slate-700/30 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">❄️</span>
-                          <span className="font-medium text-white">Refrigerator</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-300">Consumption</td>
-                      <td className="px-6 py-4">
-                        <span className="text-xs bg-violet-500/20 text-violet-300 px-2 py-1 rounded-full">AC</span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center gap-2 text-sm text-emerald-400">
-                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                          Running
-                        </span>
-                      </td>
-                    </tr>
-                    <tr className="hover:bg-slate-700/30 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">🌡️</span>
-                          <span className="font-medium text-white">HVAC System</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-300">Consumption</td>
-                      <td className="px-6 py-4">
-                        <span className="text-xs bg-cyan-500/20 text-cyan-300 px-2 py-1 rounded-full">AC</span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center gap-2 text-sm text-emerald-400">
-                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                          Running
-                        </span>
-                      </td>
-                    </tr>
-                    <tr className="hover:bg-slate-700/30 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">💡</span>
-                          <span className="font-medium text-white">Lighting</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-300">Consumption</td>
-                      <td className="px-6 py-4">
-                        <span className="text-xs bg-yellow-500/20 text-yellow-300 px-2 py-1 rounded-full">AC</span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center gap-2 text-sm text-emerald-400">
-                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                          Active
-                        </span>
-                      </td>
-                    </tr>
-                    <tr className="hover:bg-slate-700/30 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl">🧊</span>
-                          <span className="font-medium text-white">Freezer</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 text-slate-300">Consumption</td>
-                      <td className="px-6 py-4">
-                        <span className="text-xs bg-emerald-500/20 text-emerald-300 px-2 py-1 rounded-full">AC</span>
-                      </td>
-                      <td className="px-6 py-4 text-center">
-                        <span className="inline-flex items-center gap-2 text-sm text-emerald-400">
-                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                          Running
-                        </span>
-                      </td>
-                    </tr>
+                    {facilities.map((facility) => {
+                      const getIcon = (type: string, name: string) => {
+                        const lowerName = name.toLowerCase();
+                        if (type === 'producer') {
+                          if (lowerName.includes('solar')) return '☀️';
+                          if (lowerName.includes('wind')) return '💨';
+                          return '⚡';
+                        }
+                        if (type === 'accumulator') return '🔋';
+                        // Consumer icons
+                        if (lowerName.includes('kitchen')) return '🍳';
+                        if (lowerName.includes('living')) return '🛋️';
+                        if (lowerName.includes('bedroom')) return '🛏️';
+                        if (lowerName.includes('bathroom')) return '🚿';
+                        if (lowerName.includes('office')) return '💼';
+                        if (lowerName.includes('garage') || lowerName.includes('workshop')) return '🔧';
+                        if (lowerName.includes('garden') || lowerName.includes('light')) return '💡';
+                        if (lowerName.includes('pool')) return '🏊';
+                        return '🏠';
+                      };
+
+                      const getBadgeClass = (type: string) => {
+                        if (type === 'producer') return 'bg-amber-500/20 text-amber-300';
+                        if (type === 'accumulator') return 'bg-pink-500/20 text-pink-300';
+                        return 'bg-cyan-500/20 text-cyan-300';
+                      };
+
+                      return (
+                        <tr key={facility.id} className="hover:bg-slate-700/30 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <span className="text-2xl">{getIcon(facility.type, facility.name)}</span>
+                              <span className="font-medium text-white">{facility.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`text-xs ${getBadgeClass(facility.type)} px-2 py-1 rounded-full capitalize`}>
+                              {facility.type}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-slate-300">
+                            {facility.max_power} kW
+                          </td>
+                          <td className="px-6 py-4 text-center">
+                            <span className="inline-flex items-center gap-2 text-sm text-emerald-400">
+                              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                              Active
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
