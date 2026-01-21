@@ -64,23 +64,50 @@ export const DashboardV2: React.FC = () => {
     [facilities, timeseriesData]
   );
 
+  // Calculate current values from the most recent timestamp (not from sampled data)
   const currentGeneration = useMemo(() => {
-    if (data.length === 0) return 0;
-    const latest = data[data.length - 1];
+    if (timeseriesData.length === 0 || facilities.length === 0) return 0;
+    
+    // Find the most recent timestamp
+    const latestTimestamp = timeseriesData.reduce((latest, entry) => {
+      const entryTime = new Date(entry.timestamp).getTime();
+      return entryTime > latest ? entryTime : latest;
+    }, 0);
+    
+    // Get all data points from the most recent timestamp
+    const latestData = timeseriesData.filter(
+      entry => new Date(entry.timestamp).getTime() === latestTimestamp
+    );
+    
+    // Sum power values for all producers at latest timestamp
     const producers = facilities.filter(f => f.type === 'producer');
     return producers.reduce((sum, facility) => {
-      return sum + (Number(latest[facility.name]) || 0);
+      const facilityData = latestData.find(d => d.facility_id === facility.id);
+      return sum + (facilityData ? Math.abs(parseFloat(facilityData.power_value.toString())) : 0);
     }, 0);
-  }, [data, facilities]);
+  }, [timeseriesData, facilities]);
 
   const currentConsumption = useMemo(() => {
-    if (data.length === 0) return 0;
-    const latest = data[data.length - 1];
+    if (timeseriesData.length === 0 || facilities.length === 0) return 0;
+    
+    // Find the most recent timestamp
+    const latestTimestamp = timeseriesData.reduce((latest, entry) => {
+      const entryTime = new Date(entry.timestamp).getTime();
+      return entryTime > latest ? entryTime : latest;
+    }, 0);
+    
+    // Get all data points from the most recent timestamp
+    const latestData = timeseriesData.filter(
+      entry => new Date(entry.timestamp).getTime() === latestTimestamp
+    );
+    
+    // Sum power values for all consumers at latest timestamp
     const consumers = facilities.filter(f => f.type === 'consumer');
     return consumers.reduce((sum, facility) => {
-      return sum + (Number(latest[facility.name]) || 0);
+      const facilityData = latestData.find(d => d.facility_id === facility.id);
+      return sum + (facilityData ? Math.abs(parseFloat(facilityData.power_value.toString())) : 0);
     }, 0);
-  }, [data, facilities]);
+  }, [timeseriesData, facilities]);
 
   const currentBattery = useMemo(() => {
     return totals.averageBattery;

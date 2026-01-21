@@ -64,23 +64,50 @@ export const Dashboard: React.FC = () => {
     [facilities, timeseriesData]
   );
 
+  // Calculate current values from the most recent timestamp (not from sampled data)
   const currentGeneration = useMemo(() => {
-    if (data.length === 0) return 0;
-    const latest = data[data.length - 1];
+    if (timeseriesData.length === 0 || facilities.length === 0) return 0;
+    
+    // Find the most recent timestamp
+    const latestTimestamp = timeseriesData.reduce((latest, entry) => {
+      const entryTime = new Date(entry.timestamp).getTime();
+      return entryTime > latest ? entryTime : latest;
+    }, 0);
+    
+    // Get all data points from the most recent timestamp
+    const latestData = timeseriesData.filter(
+      entry => new Date(entry.timestamp).getTime() === latestTimestamp
+    );
+    
+    // Sum power values for all producers at latest timestamp
     const producers = facilities.filter(f => f.type === 'producer');
     return producers.reduce((sum, facility) => {
-      return sum + (Number(latest[facility.name]) || 0);
+      const facilityData = latestData.find(d => d.facility_id === facility.id);
+      return sum + (facilityData ? Math.abs(parseFloat(facilityData.power_value.toString())) : 0);
     }, 0);
-  }, [data, facilities]);
+  }, [timeseriesData, facilities]);
 
   const currentConsumption = useMemo(() => {
-    if (data.length === 0) return 0;
-    const latest = data[data.length - 1];
+    if (timeseriesData.length === 0 || facilities.length === 0) return 0;
+    
+    // Find the most recent timestamp
+    const latestTimestamp = timeseriesData.reduce((latest, entry) => {
+      const entryTime = new Date(entry.timestamp).getTime();
+      return entryTime > latest ? entryTime : latest;
+    }, 0);
+    
+    // Get all data points from the most recent timestamp
+    const latestData = timeseriesData.filter(
+      entry => new Date(entry.timestamp).getTime() === latestTimestamp
+    );
+    
+    // Sum power values for all consumers at latest timestamp
     const consumers = facilities.filter(f => f.type === 'consumer');
     return consumers.reduce((sum, facility) => {
-      return sum + (Number(latest[facility.name]) || 0);
+      const facilityData = latestData.find(d => d.facility_id === facility.id);
+      return sum + (facilityData ? Math.abs(parseFloat(facilityData.power_value.toString())) : 0);
     }, 0);
-  }, [data, facilities]);
+  }, [timeseriesData, facilities]);
 
   const currentBattery = useMemo(() => {
     return totals.averageBattery;
@@ -130,7 +157,7 @@ export const Dashboard: React.FC = () => {
               <h1 className="text-xl md:text-2xl font-bold tracking-tight">Energy Management System</h1>
               <p className="text-blue-100 mt-1 text-xs md:text-sm">Smart Home Energy Monitoring</p>
             </div>
-            <div className="hidden md:flex items-center gap-2 bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-lg">
+            <div className="flex items-center gap-2 bg-white/10 backdrop-blur-md px-3 py-1.5 rounded-lg">
               <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
               <span className="text-xs font-medium">Live</span>
             </div>
@@ -140,48 +167,6 @@ export const Dashboard: React.FC = () => {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* Time Period Selector */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 p-4 mb-6">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div className="flex items-center gap-2">
-              <div className="w-1 h-6 bg-blue-600 rounded-full"></div>
-              <h2 className="text-lg font-semibold text-gray-800">Time Period</h2>
-            </div>
-            <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
-              <button
-                onClick={() => setPeriod('day')}
-                className={`px-6 py-2.5 rounded-lg font-medium transition-all duration-200 ${
-                  period === 'day'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-200 scale-105'
-                    : 'bg-transparent text-gray-700 hover:bg-gray-200/50'
-                }`}
-              >
-                Day
-              </button>
-              <button
-                onClick={() => setPeriod('week')}
-                className={`px-6 py-2.5 rounded-lg font-medium transition-all duration-200 ${
-                  period === 'week'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-200 scale-105'
-                    : 'bg-transparent text-gray-700 hover:bg-gray-200/50'
-                }`}
-              >
-                Week
-              </button>
-              <button
-                onClick={() => setPeriod('month')}
-                className={`px-6 py-2.5 rounded-lg font-medium transition-all duration-200 ${
-                  period === 'month'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-200 scale-105'
-                    : 'bg-transparent text-gray-700 hover:bg-gray-200/50'
-                }`}
-              >
-                Month
-              </button>
-            </div>
-          </div>
-        </div>
-
         {/* Current Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <div className="bg-gradient-to-br from-violet-500 via-purple-600 to-indigo-600 rounded-2xl shadow-xl p-6 text-white relative overflow-hidden group hover:scale-105 transition-transform duration-300">
@@ -259,6 +244,48 @@ export const Dashboard: React.FC = () => {
                   style={{ width: `${currentBattery}%` }}
                 ></div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Time Period Selector */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 p-4 mb-6">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-2">
+              <div className="w-1 h-6 bg-blue-600 rounded-full"></div>
+              <h2 className="text-lg font-semibold text-gray-800">Time Period</h2>
+            </div>
+            <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+              <button
+                onClick={() => setPeriod('day')}
+                className={`px-6 py-2.5 rounded-lg font-medium transition-all duration-200 ${
+                  period === 'day'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-200 scale-105'
+                    : 'bg-transparent text-gray-700 hover:bg-gray-200/50'
+                }`}
+              >
+                Day
+              </button>
+              <button
+                onClick={() => setPeriod('week')}
+                className={`px-6 py-2.5 rounded-lg font-medium transition-all duration-200 ${
+                  period === 'week'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-200 scale-105'
+                    : 'bg-transparent text-gray-700 hover:bg-gray-200/50'
+                }`}
+              >
+                Week
+              </button>
+              <button
+                onClick={() => setPeriod('month')}
+                className={`px-6 py-2.5 rounded-lg font-medium transition-all duration-200 ${
+                  period === 'month'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-200 scale-105'
+                    : 'bg-transparent text-gray-700 hover:bg-gray-200/50'
+                }`}
+              >
+                Month
+              </button>
             </div>
           </div>
         </div>
