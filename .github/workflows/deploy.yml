@@ -1,5 +1,5 @@
 
-name: Deploy Vite (frontend/) to GitHub Pages
+name: Deploy energy-management-system to GitHub Pages
 
 on:
   push:
