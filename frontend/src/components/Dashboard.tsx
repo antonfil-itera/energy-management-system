@@ -8,7 +8,8 @@ import { EnergyPieChart } from './EnergyPieChart';
 export const Dashboard: React.FC = () => {
   const [period, setPeriod] = useState<TimePeriod>('day');
   const [facilities, setFacilities] = useState<Facility[]>([]);
-  const [timeseriesData, setTimeseriesData] = useState<TimeseriesData[]>([]);
+  const [currentData, setCurrentData] = useState<TimeseriesData[]>([]); // Latest data for current stats
+  const [timeseriesData, setTimeseriesData] = useState<TimeseriesData[]>([]); // Historical data for charts
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,6 +19,20 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     loadFacilities();
   }, []);
+
+  // Load current data once facilities are loaded, then poll every 60 seconds
+  useEffect(() => {
+    if (facilities.length > 0) {
+      loadCurrentData();
+      
+      // Poll for updates every 60 seconds
+      const interval = setInterval(() => {
+        loadCurrentData();
+      }, 60000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [facilities.length]);
 
   // Load timeseries data when period changes
   useEffect(() => {
@@ -39,6 +54,20 @@ export const Dashboard: React.FC = () => {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load facilities');
       setInitialLoading(false);
+    }
+  };
+
+  const loadCurrentData = async () => {
+    try {
+      // Fetch last hour of data for current values (enough to ensure we get latest)
+      const endTime = new Date();
+      const startTime = new Date(endTime.getTime() - 60 * 60 * 1000); // Last 1 hour
+      
+      const timeseries = await fetchTimeseries(startTime, endTime);
+      setCurrentData(timeseries);
+    } catch (err) {
+      console.error('Failed to load current data:', err);
+      // Don't set error state for polling failures, just log it
     }
   };
 
@@ -83,21 +112,21 @@ export const Dashboard: React.FC = () => {
   
   const totals = useMemo(() => {
     const enabledFacilitiesList = facilities.filter(f => enabledFacilities.has(f.id));
-    return calculateTotalsFromBackend(enabledFacilitiesList, timeseriesData);
-  }, [facilities, timeseriesData, enabledFacilities]);
+    return calculateTotalsFromBackend(enabledFacilitiesList, currentData);
+  }, [facilities, currentData, enabledFacilities]);
 
-  // Calculate current values from the most recent timestamp (not from sampled data)
+  // Calculate current values from the most recent timestamp in currentData
   const currentGeneration = useMemo(() => {
-    if (timeseriesData.length === 0 || facilities.length === 0) return 0;
+    if (currentData.length === 0 || facilities.length === 0) return 0;
     
     // Find the most recent timestamp
-    const latestTimestamp = timeseriesData.reduce((latest, entry) => {
+    const latestTimestamp = currentData.reduce((latest, entry) => {
       const entryTime = new Date(entry.timestamp).getTime();
       return entryTime > latest ? entryTime : latest;
     }, 0);
     
     // Get all data points from the most recent timestamp
-    const latestData = timeseriesData.filter(
+    const latestData = currentData.filter(
       entry => new Date(entry.timestamp).getTime() === latestTimestamp
     );
     
@@ -107,19 +136,19 @@ export const Dashboard: React.FC = () => {
       const facilityData = latestData.find(d => d.facility_id === facility.id);
       return sum + (facilityData ? Math.abs(parseFloat(facilityData.power_value.toString())) : 0);
     }, 0);
-  }, [timeseriesData, facilities, enabledFacilities]);
+  }, [currentData, facilities, enabledFacilities]);
 
   const currentConsumption = useMemo(() => {
-    if (timeseriesData.length === 0 || facilities.length === 0) return 0;
+    if (currentData.length === 0 || facilities.length === 0) return 0;
     
     // Find the most recent timestamp
-    const latestTimestamp = timeseriesData.reduce((latest, entry) => {
+    const latestTimestamp = currentData.reduce((latest, entry) => {
       const entryTime = new Date(entry.timestamp).getTime();
       return entryTime > latest ? entryTime : latest;
     }, 0);
     
     // Get all data points from the most recent timestamp
-    const latestData = timeseriesData.filter(
+    const latestData = currentData.filter(
       entry => new Date(entry.timestamp).getTime() === latestTimestamp
     );
     
@@ -129,7 +158,7 @@ export const Dashboard: React.FC = () => {
       const facilityData = latestData.find(d => d.facility_id === facility.id);
       return sum + (facilityData ? Math.abs(parseFloat(facilityData.power_value.toString())) : 0);
     }, 0);
-  }, [timeseriesData, facilities, enabledFacilities]);
+  }, [currentData, facilities, enabledFacilities]);
 
   const currentBattery = useMemo(() => {
     return totals.averageBattery;
@@ -137,16 +166,16 @@ export const Dashboard: React.FC = () => {
 
   // Get current power value for each facility from latest timestamp
   const currentPowerByFacility = useMemo(() => {
-    if (timeseriesData.length === 0) return new Map<number, number>();
+    if (currentData.length === 0) return new Map<number, number>();
     
     // Find the most recent timestamp
-    const latestTimestamp = timeseriesData.reduce((latest, entry) => {
+    const latestTimestamp = currentData.reduce((latest, entry) => {
       const entryTime = new Date(entry.timestamp).getTime();
       return entryTime > latest ? entryTime : latest;
     }, 0);
     
     // Get all data points from the most recent timestamp
-    const latestData = timeseriesData.filter(
+    const latestData = currentData.filter(
       entry => new Date(entry.timestamp).getTime() === latestTimestamp
     );
     
@@ -157,7 +186,7 @@ export const Dashboard: React.FC = () => {
     });
     
     return powerMap;
-  }, [timeseriesData]);
+  }, [currentData]);
 
   const netPower = currentGeneration - currentConsumption;
   const netPowerPercentage = currentConsumption > 0 
@@ -197,7 +226,10 @@ export const Dashboard: React.FC = () => {
           <button 
             onClick={() => {
               loadFacilities();
-              if (facilities.length > 0) loadTimeseries(period);
+              if (facilities.length > 0) {
+                loadCurrentData();
+                loadTimeseries(period);
+              }
             }}
             className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
           >
