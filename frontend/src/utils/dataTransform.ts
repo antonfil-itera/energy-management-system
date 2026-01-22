@@ -135,18 +135,32 @@ export const transformBackendData = (
 
 /**
  * Calculate totals for pie charts from actual facilities
+ * Uses current power values (kW) from the latest timestamp
  */
 export const calculateTotalsFromBackend = (
   facilities: Facility[],
   timeseriesData: TimeseriesData[]
 ) => {
-  // Calculate total power for each facility
+  // Get current power for each facility from latest timestamp
   const facilityTotals = new Map<number, number>();
   
-  timeseriesData.forEach(entry => {
-    const current = facilityTotals.get(entry.facility_id) || 0;
-    facilityTotals.set(entry.facility_id, current + Math.abs(parseFloat(entry.power_value.toString())));
-  });
+  if (timeseriesData.length > 0) {
+    // Find the most recent timestamp
+    const latestTimestamp = timeseriesData.reduce((latest, entry) => {
+      const entryTime = new Date(entry.timestamp).getTime();
+      return entryTime > latest ? entryTime : latest;
+    }, 0);
+    
+    // Get all data points from the most recent timestamp
+    const latestData = timeseriesData.filter(
+      entry => new Date(entry.timestamp).getTime() === latestTimestamp
+    );
+    
+    // Map facility ID to current power value
+    latestData.forEach(entry => {
+      facilityTotals.set(entry.facility_id, Math.abs(parseFloat(entry.power_value.toString())));
+    });
+  }
 
   // Separate facilities by type
   const producers = facilities.filter(f => f.type === 'producer');
@@ -156,14 +170,14 @@ export const calculateTotalsFromBackend = (
   // Create chart data for producers
   const generation: ChartDataItem[] = producers.map((facility, index) => ({
     name: facility.name,
-    value: Math.round(facilityTotals.get(facility.id) || 0),
+    value: facilityTotals.get(facility.id) || 0,
     fill: getFacilityColor('producer', index)
   })).filter(item => item.value > 0);
 
   // Create chart data for consumers
   const consumption: ChartDataItem[] = consumers.map((facility, index) => ({
     name: facility.name,
-    value: Math.round(facilityTotals.get(facility.id) || 0),
+    value: facilityTotals.get(facility.id) || 0,
     fill: getFacilityColor('consumer', index)
   })).filter(item => item.value > 0);
 

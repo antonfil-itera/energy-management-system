@@ -9,22 +9,43 @@ export const Dashboard: React.FC = () => {
   const [period, setPeriod] = useState<TimePeriod>('day');
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [timeseriesData, setTimeseriesData] = useState<TimeseriesData[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [enabledFacilities, setEnabledFacilities] = useState<Set<number>>(new Set());
 
-  // Load data from backend
+  // Load facilities once on mount
   useEffect(() => {
-    loadData(period);
-  }, [period]);
+    loadFacilities();
+  }, []);
 
-  const loadData = async (selectedPeriod: TimePeriod) => {
+  // Load timeseries data when period changes
+  useEffect(() => {
+    if (facilities.length > 0) {
+      loadTimeseries(period);
+    }
+  }, [period, facilities.length]);
+
+  const loadFacilities = async () => {
     try {
-      setLoading(true);
+      setInitialLoading(true);
       setError(null);
 
       // Fetch facilities
       const facilitiesData = await fetchFacilities();
       setFacilities(facilitiesData);
+      // Initialize all facilities as enabled (only once)
+      setEnabledFacilities(new Set(facilitiesData.map(f => f.id)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load facilities');
+      setInitialLoading(false);
+    }
+  };
+
+  const loadTimeseries = async (selectedPeriod: TimePeriod) => {
+    try {
+      setLoading(true);
+      setError(null);
 
       // Calculate time range based on period
       const endTime = new Date();
@@ -47,22 +68,23 @@ export const Dashboard: React.FC = () => {
       const timeseries = await fetchTimeseries(startTime, endTime);
       setTimeseriesData(timeseries);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load data');
+      setError(err instanceof Error ? err.message : 'Failed to load timeseries data');
     } finally {
       setLoading(false);
+      setInitialLoading(false);
     }
   };
 
-  // Transform backend data to chart format
-  const data = useMemo(() => 
-    transformBackendData(facilities, timeseriesData, period), 
-    [facilities, timeseriesData, period]
-  );
+  // Transform backend data to chart format (only enabled facilities)
+  const data = useMemo(() => {
+    const enabledFacilitiesList = facilities.filter(f => enabledFacilities.has(f.id));
+    return transformBackendData(enabledFacilitiesList, timeseriesData, period);
+  }, [facilities, timeseriesData, period, enabledFacilities]);
   
-  const totals = useMemo(() => 
-    calculateTotalsFromBackend(facilities, timeseriesData), 
-    [facilities, timeseriesData]
-  );
+  const totals = useMemo(() => {
+    const enabledFacilitiesList = facilities.filter(f => enabledFacilities.has(f.id));
+    return calculateTotalsFromBackend(enabledFacilitiesList, timeseriesData);
+  }, [facilities, timeseriesData, enabledFacilities]);
 
   // Calculate current values from the most recent timestamp (not from sampled data)
   const currentGeneration = useMemo(() => {
@@ -79,13 +101,13 @@ export const Dashboard: React.FC = () => {
       entry => new Date(entry.timestamp).getTime() === latestTimestamp
     );
     
-    // Sum power values for all producers at latest timestamp
-    const producers = facilities.filter(f => f.type === 'producer');
+    // Sum power values for enabled producers only at latest timestamp
+    const producers = facilities.filter(f => f.type === 'producer' && enabledFacilities.has(f.id));
     return producers.reduce((sum, facility) => {
       const facilityData = latestData.find(d => d.facility_id === facility.id);
       return sum + (facilityData ? Math.abs(parseFloat(facilityData.power_value.toString())) : 0);
     }, 0);
-  }, [timeseriesData, facilities]);
+  }, [timeseriesData, facilities, enabledFacilities]);
 
   const currentConsumption = useMemo(() => {
     if (timeseriesData.length === 0 || facilities.length === 0) return 0;
@@ -101,24 +123,60 @@ export const Dashboard: React.FC = () => {
       entry => new Date(entry.timestamp).getTime() === latestTimestamp
     );
     
-    // Sum power values for all consumers at latest timestamp
-    const consumers = facilities.filter(f => f.type === 'consumer');
+    // Sum power values for enabled consumers only at latest timestamp
+    const consumers = facilities.filter(f => f.type === 'consumer' && enabledFacilities.has(f.id));
     return consumers.reduce((sum, facility) => {
       const facilityData = latestData.find(d => d.facility_id === facility.id);
       return sum + (facilityData ? Math.abs(parseFloat(facilityData.power_value.toString())) : 0);
     }, 0);
-  }, [timeseriesData, facilities]);
+  }, [timeseriesData, facilities, enabledFacilities]);
 
   const currentBattery = useMemo(() => {
     return totals.averageBattery;
   }, [totals]);
+
+  // Get current power value for each facility from latest timestamp
+  const currentPowerByFacility = useMemo(() => {
+    if (timeseriesData.length === 0) return new Map<number, number>();
+    
+    // Find the most recent timestamp
+    const latestTimestamp = timeseriesData.reduce((latest, entry) => {
+      const entryTime = new Date(entry.timestamp).getTime();
+      return entryTime > latest ? entryTime : latest;
+    }, 0);
+    
+    // Get all data points from the most recent timestamp
+    const latestData = timeseriesData.filter(
+      entry => new Date(entry.timestamp).getTime() === latestTimestamp
+    );
+    
+    // Create map of facility ID to current power value
+    const powerMap = new Map<number, number>();
+    latestData.forEach(data => {
+      powerMap.set(data.facility_id, Math.abs(parseFloat(data.power_value.toString())));
+    });
+    
+    return powerMap;
+  }, [timeseriesData]);
 
   const netPower = currentGeneration - currentConsumption;
   const netPowerPercentage = currentConsumption > 0 
     ? Math.abs((netPower / currentConsumption) * 100) 
     : 0;
 
-  if (loading) {
+  const toggleFacility = (facilityId: number) => {
+    setEnabledFacilities(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(facilityId)) {
+        newSet.delete(facilityId);
+      } else {
+        newSet.add(facilityId);
+      }
+      return newSet;
+    });
+  };
+
+  if (initialLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 flex items-center justify-center">
         <div className="text-center">
@@ -137,7 +195,10 @@ export const Dashboard: React.FC = () => {
           <p className="text-red-800 font-semibold mb-2">Error loading data</p>
           <p className="text-red-600 text-sm">{error}</p>
           <button 
-            onClick={() => loadData(period)}
+            onClick={() => {
+              loadFacilities();
+              if (facilities.length > 0) loadTimeseries(period);
+            }}
             className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
           >
             Retry
@@ -149,6 +210,14 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100">
+      {/* Loading overlay for period changes */}
+      {loading && (
+        <div className="fixed top-20 right-4 z-50 bg-blue-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 animate-pulse">
+          <div className="inline-block animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+          <span className="text-sm font-medium">Updating...</span>
+        </div>
+      )}
+      
       {/* Header */}
       <header className="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 text-white shadow-2xl sticky top-0 z-50 backdrop-blur-sm bg-opacity-95">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
@@ -248,6 +317,110 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
 
+        {/* Device Status */}
+        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 p-6 mb-6">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-1 h-8 bg-blue-600 rounded-full"></div>
+            <h3 className="text-xl font-bold text-gray-800">Facilities Overview</h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {facilities.map((facility) => {
+              const getIcon = (type: string, name: string) => {
+                const lowerName = name.toLowerCase();
+                if (type === 'producer') {
+                  if (lowerName.includes('solar')) return '☀️';
+                  if (lowerName.includes('wind')) return '💨';
+                  return '⚡';
+                }
+                if (type === 'accumulator') return '🔋';
+                // Consumer icons
+                if (lowerName.includes('kitchen')) return '🍳';
+                if (lowerName.includes('living')) return '🛋️';
+                if (lowerName.includes('bedroom')) return '🛏️';
+                if (lowerName.includes('bathroom')) return '🚿';
+                if (lowerName.includes('office')) return '💼';
+                if (lowerName.includes('garage') || lowerName.includes('workshop')) return '🔧';
+                if (lowerName.includes('garden') || lowerName.includes('light')) return '💡';
+                if (lowerName.includes('pool')) return '🏊';
+                return '🏠';
+              };
+
+              const getColorClass = (type: string) => {
+                if (type === 'producer') return 'from-amber-50 to-orange-50 border-amber-200';
+                if (type === 'accumulator') return 'from-fuchsia-50 to-pink-50 border-fuchsia-200';
+                return 'from-sky-50 to-blue-50 border-sky-200';
+              };
+
+              const getBadgeClass = (type: string) => {
+                if (type === 'producer') return 'bg-amber-200 text-amber-800';
+                if (type === 'accumulator') return 'bg-fuchsia-200 text-fuchsia-800';
+                return 'bg-sky-200 text-sky-800';
+              };
+
+              const isEnabled = enabledFacilities.has(facility.id);
+              const currentPower = currentPowerByFacility.get(facility.id) ?? 0;
+              // WORKAROUND: Backend returns negative max_power for consumers - use Math.abs() until fixed
+              const maxPower = Math.abs(facility.max_power);
+              
+              return (
+                <div 
+                  key={facility.id}
+                  className={`bg-gradient-to-br ${getColorClass(facility.type)} border-2 rounded-xl p-4 hover:shadow-md transition-all duration-200 relative ${
+                    !isEnabled ? 'opacity-50 grayscale' : ''
+                  }`}
+                >
+                  <button
+                    onClick={() => toggleFacility(facility.id)}
+                    className={`absolute top-2 right-2 w-10 h-5 rounded-full transition-colors duration-200 flex items-center ${
+                      isEnabled ? 'bg-green-500' : 'bg-gray-400'
+                    }`}
+                    title={isEnabled ? 'Click to disable' : 'Click to enable'}
+                  >
+                    <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-200 ${
+                      isEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}></div>
+                  </button>
+                  <div className="flex items-start gap-3">
+                    <div className="text-3xl flex-shrink-0 drop-shadow">
+                      {getIcon(facility.type, facility.name)}
+                    </div>
+                    <div className="flex-1 min-w-0 pr-8">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <p className="font-semibold text-gray-800 text-sm leading-tight truncate" title={facility.name}>
+                          {facility.name}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`text-[10px] ${getBadgeClass(facility.type)} px-2 py-0.5 rounded-full font-medium`}>
+                          {facility.type.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-1.5 h-1.5 rounded-full ${
+                            isEnabled ? 'bg-green-500 animate-pulse' : 'bg-gray-400'
+                          }`}></div>
+                          <p className={`text-xs font-medium ${
+                            isEnabled ? 'text-green-700' : 'text-gray-500'
+                          }`}>
+                            {!isEnabled && '(disabled)'}
+                          </p>
+                        </div>
+                        <div className="text-xs text-gray-700">
+                          <span className="font-semibold">Current:</span> {currentPower.toFixed(1)} kW
+                        </div>
+                        <div className="text-xs text-gray-600">
+                          <span className="font-semibold">Max:</span> {maxPower} kW
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Time Period Selector */}
         <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 p-4 mb-6">
           <div className="flex items-center justify-between flex-wrap gap-3">
@@ -326,80 +499,6 @@ export const Dashboard: React.FC = () => {
               title="Consumption Distribution"
               theme="light"
             />
-          </div>
-        </div>
-
-        {/* Device Status */}
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl shadow-lg border border-gray-200/50 p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-1 h-8 bg-blue-600 rounded-full"></div>
-            <h3 className="text-xl font-bold text-gray-800">Facilities Overview</h3>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {facilities.map((facility) => {
-              const getIcon = (type: string, name: string) => {
-                const lowerName = name.toLowerCase();
-                if (type === 'producer') {
-                  if (lowerName.includes('solar')) return '☀️';
-                  if (lowerName.includes('wind')) return '💨';
-                  return '⚡';
-                }
-                if (type === 'accumulator') return '🔋';
-                // Consumer icons
-                if (lowerName.includes('kitchen')) return '🍳';
-                if (lowerName.includes('living')) return '🛋️';
-                if (lowerName.includes('bedroom')) return '🛏️';
-                if (lowerName.includes('bathroom')) return '🚿';
-                if (lowerName.includes('office')) return '💼';
-                if (lowerName.includes('garage') || lowerName.includes('workshop')) return '🔧';
-                if (lowerName.includes('garden') || lowerName.includes('light')) return '💡';
-                if (lowerName.includes('pool')) return '🏊';
-                return '🏠';
-              };
-
-              const getColorClass = (type: string) => {
-                if (type === 'producer') return 'from-amber-50 to-orange-50 border-amber-200';
-                if (type === 'accumulator') return 'from-fuchsia-50 to-pink-50 border-fuchsia-200';
-                return 'from-sky-50 to-blue-50 border-sky-200';
-              };
-
-              const getBadgeClass = (type: string) => {
-                if (type === 'producer') return 'bg-amber-200 text-amber-800';
-                if (type === 'accumulator') return 'bg-fuchsia-200 text-fuchsia-800';
-                return 'bg-sky-200 text-sky-800';
-              };
-
-              return (
-                <div 
-                  key={facility.id}
-                  className={`bg-gradient-to-br ${getColorClass(facility.type)} border-2 rounded-xl p-4 hover:shadow-md transition-shadow duration-200`}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="text-3xl flex-shrink-0 drop-shadow">
-                      {getIcon(facility.type, facility.name)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2 mb-1">
-                        <p className="font-semibold text-gray-800 text-sm leading-tight truncate" title={facility.name}>
-                          {facility.name}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className={`text-[10px] ${getBadgeClass(facility.type)} px-2 py-0.5 rounded-full font-medium`}>
-                          {facility.type.toUpperCase()}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
-                        <p className="text-xs text-green-700 font-medium">
-                          {facility.max_power} kW
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
           </div>
         </div>
       </main>

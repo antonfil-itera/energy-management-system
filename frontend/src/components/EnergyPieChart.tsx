@@ -59,7 +59,7 @@ export const EnergyPieChart: React.FC<EnergyPieChartProps> = ({ data, title, the
             ))}
           </Pie>
           <Tooltip 
-            formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(1)} kWh` : ''}
+            formatter={(value: number | undefined) => value !== undefined ? `${value.toFixed(1)} kW` : ''}
             contentStyle={{ 
               backgroundColor: tooltipBg, 
               border: `1px solid ${tooltipBorder}`,
@@ -74,7 +74,7 @@ export const EnergyPieChart: React.FC<EnergyPieChartProps> = ({ data, title, the
         </PieChart>
       </ResponsiveContainer>
       <div className={`mt-6 pt-4 border-t ${borderColor}`}>
-        <p className={`text-sm ${totalTextColor} text-center`}>Total: <span className={`font-bold ${totalValueColor} text-lg`}>{total.toFixed(1)} kWh</span></p>
+        <p className={`text-sm ${totalTextColor} text-center`}>Total: <span className={`font-bold ${totalValueColor} text-lg`}>{total.toFixed(1)} kW</span></p>
       </div>
     </div>
   );
