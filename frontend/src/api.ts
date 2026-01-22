@@ -32,7 +32,7 @@ let timeseriesCache: TimeseriesData[] | null = null;
 export const fetchFacilities = async (): Promise<Facility[]> => {
   if (facilitiesCache) return facilitiesCache;
   
-  const response = await fetch('/data/facilities.json');
+  const response = await fetch(`${import.meta.env.BASE_URL}data/facilities.json`);
   if (!response.ok) throw new Error('Failed to load facilities data');
   
   const data = await response.json();
@@ -63,7 +63,7 @@ export const fetchTimeseries = async (
     //const response = await fetch('/data/timeseries.json');
     //if (!response.ok) throw new Error('Failed to load timeseries data');
     //timeseriesCache = await response.json();
-    timeseriesCache = await fetchGzipJson('/data/timeseries.json.gz');
+    timeseriesCache = await fetchGzipJson(`${import.meta.env.BASE_URL}data/timeseries.json.gz`);
   }
   
   let filtered = timeseriesCache as TimeseriesData[];
