@@ -1,27 +1,21 @@
 
-name: Deploy energy-management-system to GitHub Pages
+name: Deploy energy-management-system to Firebase Hosting
 
 on:
   push:
-    branches: [ frontend/v1-deploy ]
+    branches: [ frontend/v1-deploy-firebase ]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: firebase-hosting
   cancel-in-progress: true
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: frontend
 
     steps:
       - name: Checkout
@@ -35,24 +29,26 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
+        working-directory: frontend
         run: npm ci
 
       - name: Build
+        working-directory: frontend
         run: npm run build
 
-      - name: Upload Pages artifact (dist)
-        uses: actions/upload-pages-artifact@v3
+      - name: Deploy to Firebase Hosting (live)
+        uses: FirebaseExtended/action-hosting-deploy@v0
         with:
-          path: frontend/dist
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          # Service account JSON stored as a GitHub Secret (see section 2 below)
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_ITERA_ENERGY_MANAGEMENT_SYSTEM }}
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+          # Your Firebase project ID (e.g. "energy-management-system-demo")
+          projectId: "itera-energy-management-system"
 
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          # Deploy to production ("live") channel
+          channelId: live
+
+          # Where firebase.json lives relative to repo root
+          # (we’ll place firebase.json in the repo root)
+          entryPoint: .
