@@ -45,6 +45,13 @@ export const fetchFacilities = async (): Promise<Facility[]> => {
   return facilitiesCache;
 };
 
+async function fetchGzipJson(url: any) {
+  const res = await fetch(url);
+  const ds = new DecompressionStream('gzip');
+  const decompressed = res?.body?.pipeThrough(ds);
+  return await new Response(decompressed).json();
+}
+
 export const fetchTimeseries = async (
   startTime?: Date,
   endTime?: Date,
@@ -53,9 +60,10 @@ export const fetchTimeseries = async (
 ): Promise<TimeseriesData[]> => {
   // Load from cache or fetch
   if (!timeseriesCache) {
-    const response = await fetch('/data/timeseries.json');
-    if (!response.ok) throw new Error('Failed to load timeseries data');
-    timeseriesCache = await response.json();
+    //const response = await fetch('/data/timeseries.json');
+    //if (!response.ok) throw new Error('Failed to load timeseries data');
+    //timeseriesCache = await response.json();
+    timeseriesCache = await fetchGzipJson('/data/timeseries.json.gz');
   }
   
   let filtered = timeseriesCache as TimeseriesData[];
