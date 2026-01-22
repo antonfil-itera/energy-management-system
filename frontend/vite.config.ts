@@ -4,7 +4,6 @@ import tailwindcss from '@tailwindcss/postcss'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: '/energy-management-system/',
   plugins: [react()],
   css: {
     postcss: {
